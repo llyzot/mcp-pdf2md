@@ -47,9 +47,9 @@ def test_progress_callback():
     
     async def test_callback():
         print("Testing progress notification callback...")
-        for i in range(1, 6):
-            await progress_notification_callback(i, 10, "test-batch-123")
-            print(f"Progress update {i}/10 completed")
+        for i in range(1, 16):
+            await progress_notification_callback(i, 30, "test-batch-123")
+            print(f"Progress update {i}/30 completed")
     
     asyncio.run(test_callback())
     print("Progress callback test completed.\n")
