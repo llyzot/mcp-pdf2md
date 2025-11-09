@@ -24,6 +24,46 @@ An MCP-based high-performance PDF to Markdown conversion service powered by Mine
 ## System Requirements
 
 - Software: Python 3.10+
+- API: MinerU API key (required)
+
+## Timeout Configuration
+
+The service includes comprehensive timeout management to prevent connection drops during long operations. You can configure these timeouts using environment variables:
+
+### Timeout Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HTTP_CLIENT_TIMEOUT` | 600s (10 min) | HTTP client timeout for all requests |
+| `API_REQUEST_TIMEOUT` | 300s (5 min) | Timeout for batch API operations |
+| `DOWNLOAD_TIMEOUT` | 600s (10 min) | Timeout for downloading ZIP files |
+| `STATUS_CHECK_TIMEOUT` | 60s (1 min) | Timeout for individual status checks |
+| `TASK_MAX_RETRIES` | 120 | Max retries for task polling (10 min total) |
+| `TASK_RETRY_INTERVAL` | 5s | Seconds between status checks |
+
+### Example Configuration
+
+Create a `.env` file with your custom timeouts:
+
+```bash
+# For very large files or slow networks
+HTTP_CLIENT_TIMEOUT=1800  # 30 minutes
+DOWNLOAD_TIMEOUT=1800     # 30 minutes
+TASK_MAX_RETRIES=360      # 30 minutes of polling
+TASK_RETRY_INTERVAL=5     # Check every 5 seconds
+
+# For faster networks with smaller files
+HTTP_CLIENT_TIMEOUT=300   # 5 minutes
+API_REQUEST_TIMEOUT=120   # 2 minutes
+TASK_MAX_RETRIES=60        # 5 minutes of polling
+```
+
+### Connection Stability Features
+
+- **Progress Monitoring**: Automatic progress notifications during long operations
+- **Exponential Backoff**: Smart retry logic for failed downloads
+- **Consecutive Error Detection**: Prevents infinite loops on persistent failures
+- **Graceful Degradation**: Detailed error messages for troubleshooting
 
 ## Quick Start
 
