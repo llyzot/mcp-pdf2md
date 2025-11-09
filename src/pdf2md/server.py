@@ -250,29 +250,35 @@ def parse_url_string(url_string):
     Returns:
         list: List of URLs
     """
-    if isinstance(url_string, str):
-        if (url_string.startswith('"') and url_string.endswith('"')) or \
-           (url_string.startswith("'") and url_string.endswith("'")):
-            url_string = url_string[1:-1]
+    if not isinstance(url_string, str):
+        return [url_string]
     
     urls = []
-    for part in url_string.split():
-        if ',' in part:
-            urls.extend(part.split(','))
-        elif '\n' in part:
-            urls.extend(part.split('\n'))
-        else:
-            urls.append(part)
+    current_url = ""
+    in_quotes = False
+    quote_char = None
     
-    cleaned_urls = []
-    for url in urls:
-        if (url.startswith('"') and url.endswith('"')) or \
-           (url.startswith("'") and url.endswith("'")):
-            cleaned_urls.append(url[1:-1])
+    for char in url_string:
+        if char in ('"', "'"):
+            if not in_quotes:
+                in_quotes = True
+                quote_char = char
+            elif char == quote_char:
+                in_quotes = False
+                quote_char = None
+            else:
+                current_url += char
+        elif char in (',', '\n', ' ') and not in_quotes:
+            if current_url.strip():
+                urls.append(current_url.strip())
+            current_url = ""
         else:
-            cleaned_urls.append(url)
+            current_url += char
     
-    return cleaned_urls
+    if current_url.strip():
+        urls.append(current_url.strip())
+    
+    return [u for u in urls if u]
 
 def parse_path_string(path_string):
     """
@@ -284,29 +290,35 @@ def parse_path_string(path_string):
     Returns:
         list: List of file paths
     """
-    if isinstance(path_string, str):
-        if (path_string.startswith('"') and path_string.endswith('"')) or \
-           (path_string.startswith("'") and path_string.endswith("'")):
-            path_string = path_string[1:-1]
+    if not isinstance(path_string, str):
+        return [path_string]
     
     paths = []
-    for part in path_string.split():
-        if ',' in part:
-            paths.extend(part.split(','))
-        elif '\n' in part:
-            paths.extend(part.split('\n'))
-        else:
-            paths.append(part)
+    current_path = ""
+    in_quotes = False
+    quote_char = None
     
-    cleaned_paths = []
-    for path in paths:
-        if (path.startswith('"') and path.endswith('"')) or \
-           (path.startswith("'") and path.endswith("'")):
-            cleaned_paths.append(path[1:-1])
+    for char in path_string:
+        if char in ('"', "'"):
+            if not in_quotes:
+                in_quotes = True
+                quote_char = char
+            elif char == quote_char:
+                in_quotes = False
+                quote_char = None
+            else:
+                current_path += char
+        elif char in (',', '\n', ' ') and not in_quotes:
+            if current_path.strip():
+                paths.append(current_path.strip())
+            current_path = ""
         else:
-            cleaned_paths.append(path)
+            current_path += char
     
-    return cleaned_paths
+    if current_path.strip():
+        paths.append(current_path.strip())
+    
+    return [p for p in paths if p]
 
 # Create MCP server
 mcp = FastMCP("PDF to Markdown Conversion Service")
@@ -318,6 +330,7 @@ async def convert_pdf_url(url: str, enable_ocr: bool = True) -> Dict[str, Any]:
     
     Args:
         url: PDF file URL or URL list, can be separated by spaces, commas, or newlines
+             URLs with spaces should be enclosed in quotes, e.g. "https://example.com/path with spaces/file.pdf"
         enable_ocr: Whether to enable OCR (default: True)
 
     Returns:
@@ -398,6 +411,7 @@ async def convert_pdf_file(file_path: str, enable_ocr: bool = True) -> Dict[str,
     
     Args:
         file_path: PDF file local path or path list, can be separated by spaces, commas, or newlines
+                   Paths with spaces should be enclosed in quotes, e.g. "/path/to/My Documents/file.pdf"
         enable_ocr: Whether to enable OCR (default: True)
 
     Returns:
@@ -584,6 +598,9 @@ https://example.com/document3.pdf
 # Convert multiple URLs with comma separation
 result = await convert_pdf_url("https://example.com/doc1.pdf, https://example.com/doc2.pdf")
 
+# Convert URL with spaces (use quotes)
+result = await convert_pdf_url('"https://example.com/path with spaces/document.pdf"')
+
 # Convert single local file
 result = await convert_pdf_file("C:/Documents/document.pdf")
 
@@ -593,6 +610,9 @@ C:/Documents/document1.pdf
 C:/Documents/document2.pdf
 C:/Documents/document3.pdf
 ''')
+
+# Convert files with spaces in path (use quotes)
+result = await convert_pdf_file('''"C:/My Documents/document1.pdf" "C:/My Downloads/document2.pdf"''')
 
 # Mixed input handling (URLs and local files)
 url_result = await convert_pdf_url('''
@@ -604,6 +624,12 @@ C:/Documents/doc1.pdf
 C:/Documents/doc2.pdf
 ''')
 ```
+
+## Handling paths/URLs with spaces:
+
+For paths or URLs containing spaces, enclose them in quotes (single or double quotes):
+- Quoted path: "/path/with spaces/file.pdf" or '/path/with spaces/file.pdf'
+- Multiple quoted paths: "/path/with spaces/file1.pdf", "/path/with spaces/file2.pdf"
 
 ## Conversion results:
 Successful conversion returns a dictionary containing conversion result information, and the converted Markdown files will be saved in the specified output directory, with temporary downloaded ZIP files automatically deleted after unzipping to save space.
