@@ -10,14 +10,14 @@ from dotenv import load_dotenv
 from typing import Optional, List, Dict, Any
 from mcp.server.fastmcp import FastMCP
 
-# Set up logging - disable all log output
+# Set up logging - enable INFO level for progress notifications
 logging.basicConfig(
-    level=logging.CRITICAL,  # Only record critical errors
+    level=logging.INFO,  # Enable INFO level for progress notifications
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[]  # Remove all handlers, no log output
+    handlers=[logging.StreamHandler()]  # Enable console output
 )
 logger = logging.getLogger("pdf2md")
-logger.disabled = True  # Completely disable logging
+logger.setLevel(logging.INFO)  # Enable INFO level for progress notifications
 
 # Load environment variables
 load_dotenv()
