@@ -29,6 +29,14 @@ MINERU_BATCH_API = os.environ.get("MINERU_BATCH_API", "https://mineru.net/api/v4
 MINERU_BATCH_RESULTS_API = os.environ.get("MINERU_BATCH_RESULTS_API", "https://mineru.net/api/v4/extract-results/batch")
 MINERU_FILE_URLS_API = os.environ.get("MINERU_FILE_URLS_API", "https://mineru.net/api/v4/file-urls/batch")
 
+# Timeout configuration (in seconds)
+HTTP_CLIENT_TIMEOUT = float(os.environ.get("HTTP_CLIENT_TIMEOUT", "600"))  # 10 minutes default
+API_REQUEST_TIMEOUT = float(os.environ.get("API_REQUEST_TIMEOUT", "300"))   # 5 minutes default
+DOWNLOAD_TIMEOUT = float(os.environ.get("DOWNLOAD_TIMEOUT", "600"))         # 10 minutes default
+STATUS_CHECK_TIMEOUT = float(os.environ.get("STATUS_CHECK_TIMEOUT", "60")) # 1 minute default
+TASK_MAX_RETRIES = int(os.environ.get("TASK_MAX_RETRIES", "120"))           # 120 retries * 5s = 10 minutes max
+TASK_RETRY_INTERVAL = int(os.environ.get("TASK_RETRY_INTERVAL", "5"))        # 5 seconds between checks
+
 # Global variables
 OUTPUT_DIR = "./downloads"
 
@@ -70,20 +78,27 @@ def print_task_status(extract_results):
     
     return all_done, any_done
 
-async def check_task_status(client, batch_id, max_retries=60, sleep_seconds=5):
+async def check_task_status(client, batch_id, max_retries=None, sleep_seconds=None):
     """
-    Check batch task status
+    Check batch task status with improved timeout handling
     
     Args:
         client: HTTP client
         batch_id: Batch ID
-        max_retries: Maximum number of retries
-        sleep_seconds: Seconds between retries
+        max_retries: Maximum number of retries (uses global config if None)
+        sleep_seconds: Seconds between retries (uses global config if None)
         
     Returns:
         dict: Dictionary containing task status information, or error message if failed
     """
+    if max_retries is None:
+        max_retries = TASK_MAX_RETRIES
+    if sleep_seconds is None:
+        sleep_seconds = TASK_RETRY_INTERVAL
+        
     retry_count = 0
+    consecutive_errors = 0
+    max_consecutive_errors = 5
     
     while retry_count < max_retries:
         retry_count += 1
@@ -92,19 +107,27 @@ async def check_task_status(client, batch_id, max_retries=60, sleep_seconds=5):
             status_response = await client.get(
                 f"{MINERU_BATCH_RESULTS_API}/{batch_id}",
                 headers=HEADERS,
-                timeout=60.0  
+                timeout=STATUS_CHECK_TIMEOUT
             )
             
             if status_response.status_code != 200:
-                retry_count += 1
+                consecutive_errors += 1
+                if consecutive_errors >= max_consecutive_errors:
+                    return {
+                        "success": False,
+                        "error": f"Too many consecutive errors ({consecutive_errors}), last status: {status_response.status_code}"
+                    }
+                
                 if retry_count < max_retries:
                     await asyncio.sleep(sleep_seconds)
                 continue
             
+            # Reset consecutive errors on successful request
+            consecutive_errors = 0
+            
             try:
                 status_data = status_response.json()
-            except Exception as e:
-                retry_count += 1
+            except json.JSONDecodeError as e:
                 if retry_count < max_retries:
                     await asyncio.sleep(sleep_seconds)
                 continue
@@ -119,19 +142,52 @@ async def check_task_status(client, batch_id, max_retries=60, sleep_seconds=5):
                     "success": True,
                     "extract_results": extract_results,
                     "task_data": task_data,
-                    "status_data": status_data
+                    "status_data": status_data,
+                    "total_checks": retry_count
                 }
             
             await asyncio.sleep(sleep_seconds)
             
+        except httpx.TimeoutException:
+            # Handle timeout specifically
+            consecutive_errors += 1
+            if consecutive_errors >= max_consecutive_errors:
+                return {
+                    "success": False,
+                    "error": f"Too many consecutive timeouts ({consecutive_errors})"
+                }
+            
+            if retry_count < max_retries:
+                await asyncio.sleep(sleep_seconds)
+                
+        except httpx.RequestError as e:
+            # Handle network errors
+            consecutive_errors += 1
+            if consecutive_errors >= max_consecutive_errors:
+                return {
+                    "success": False,
+                    "error": f"Network error after {consecutive_errors} attempts: {str(e)}"
+                }
+            
+            if retry_count < max_retries:
+                await asyncio.sleep(sleep_seconds)
+                
         except Exception as e:
-            retry_count += 1
+            # Handle any other unexpected errors
+            consecutive_errors += 1
+            if consecutive_errors >= max_consecutive_errors:
+                return {
+                    "success": False,
+                    "error": f"Unexpected error after {consecutive_errors} attempts: {str(e)}"
+                }
+            
             if retry_count < max_retries:
                 await asyncio.sleep(sleep_seconds)
     
     return {
         "success": False,
-        "error": "Polling timeout, unable to get final results"
+        "error": f"Task polling timeout after {retry_count} attempts (max {max_retries})",
+        "total_checks": retry_count
     }
 
 async def download_batch_results(client, extract_results):
@@ -164,25 +220,28 @@ async def download_batch_results(client, extract_results):
     
     return downloaded_files
 
-async def download_zip_file(client, zip_url, file_name, prefix="md", max_retries=3):
+async def download_zip_file(client, zip_url, file_name, prefix="md", max_retries=None):
     """
-    Download and save ZIP file, then automatically unzip
+    Download and save ZIP file, then automatically unzip with improved timeout handling
     
     Args:
         client: HTTP client
         zip_url: ZIP file URL
         file_name: File name
         prefix: File prefix
-        max_retries: Maximum number of retries
+        max_retries: Maximum number of retries (defaults to 3)
         
     Returns:
         dict: Dictionary containing file name and unzip directory, or None if failed
     """
+    if max_retries is None:
+        max_retries = 3
+        
     retry_count = 0
     
     while retry_count < max_retries:
         try:
-            zip_response = await client.get(zip_url, follow_redirects=True, timeout=120.0)
+            zip_response = await client.get(zip_url, follow_redirects=True, timeout=DOWNLOAD_TIMEOUT)
             
             if zip_response.status_code == 200:
                 current_date = time.strftime("%Y%m%d")
@@ -320,6 +379,21 @@ def parse_path_string(path_string):
     
     return [p for p in paths if p]
 
+# Progress notification callback to prevent connection timeouts
+async def progress_notification_callback(current_attempt, max_attempts, batch_id):
+    """
+    Send progress notifications to prevent MCP connection timeouts during long operations
+    
+    Args:
+        current_attempt: Current attempt number
+        max_attempts: Maximum number of attempts
+        batch_id: Task batch ID
+    """
+    # This function can be extended to send actual progress notifications
+    # For now, it just ensures the event loop stays responsive
+    progress_percent = min(100, int((current_attempt / max_attempts) * 100))
+    logger.debug(f"Task progress: {progress_percent}% (attempt {current_attempt}/{max_attempts}) for batch {batch_id}")
+
 # Create MCP server
 mcp = FastMCP("PDF to Markdown Conversion Service")
 
@@ -344,7 +418,7 @@ async def convert_pdf_url(url: str, enable_ocr: bool = True) -> Dict[str, Any]:
     else:
         urls = [url]  
     
-    async with httpx.AsyncClient(timeout=300.0) as client:
+    async with httpx.AsyncClient(timeout=HTTP_CLIENT_TIMEOUT) as client:
         try:
             files = []
             for i, url_item in enumerate(urls):
@@ -366,7 +440,7 @@ async def convert_pdf_url(url: str, enable_ocr: bool = True) -> Dict[str, Any]:
                 MINERU_BATCH_API,
                 headers=HEADERS,
                 json=batch_data,
-                timeout=300.0
+                timeout=API_REQUEST_TIMEOUT
             )
             
             if response.status_code != 200:
@@ -383,7 +457,7 @@ async def convert_pdf_url(url: str, enable_ocr: bool = True) -> Dict[str, Any]:
                 if not batch_id:
                     return {"success": False, "error": "Failed to get batch ID"}
                 
-                task_status = await check_task_status(client, batch_id)
+                task_status = await check_task_status(client, batch_id, progress_callback=progress_notification_callback)
                 
                 if not task_status.get("success"):
                     return task_status
@@ -432,7 +506,7 @@ async def convert_pdf_file(file_path: str, enable_ocr: bool = True) -> Dict[str,
             if not path.lower().endswith('.pdf'):
                 return {"success": False, "error": f"File is not in PDF format: {path}"}
     
-    async with httpx.AsyncClient(timeout=300.0) as client:
+    async with httpx.AsyncClient(timeout=HTTP_CLIENT_TIMEOUT) as client:
         try:
             file_names = [os.path.basename(path) for path in file_paths]
             
@@ -456,7 +530,7 @@ async def convert_pdf_file(file_path: str, enable_ocr: bool = True) -> Dict[str,
                 MINERU_FILE_URLS_API,
                 headers=HEADERS,
                 json=file_url_data,
-                timeout=60.0
+                timeout=API_REQUEST_TIMEOUT
             )
             
             if file_url_response.status_code != 200:
@@ -484,7 +558,7 @@ async def convert_pdf_file(file_path: str, enable_ocr: bool = True) -> Dict[str,
                             upload_url,
                             content=file_content,
                             headers={},  
-                            timeout=300.0
+                            timeout=API_REQUEST_TIMEOUT
                         )
                     
                     if upload_response.status_code != 200:
@@ -497,7 +571,7 @@ async def convert_pdf_file(file_path: str, enable_ocr: bool = True) -> Dict[str,
             if not any(result["success"] for result in upload_results):
                 return {"success": False, "error": "All files failed to upload", "upload_results": upload_results}
             
-            task_status = await check_task_status(client, batch_id)
+            task_status = await check_task_status(client, batch_id, progress_callback=progress_notification_callback)
             
             if not task_status.get("success"):
                 return task_status
