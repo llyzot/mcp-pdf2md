@@ -78,7 +78,7 @@ def print_task_status(extract_results):
     
     return all_done, any_done
 
-async def check_task_status(client, batch_id, max_retries=None, sleep_seconds=None):
+async def check_task_status(client, batch_id, max_retries=None, sleep_seconds=None, progress_callback=None):
     """
     Check batch task status with improved timeout handling
     
@@ -87,6 +87,7 @@ async def check_task_status(client, batch_id, max_retries=None, sleep_seconds=No
         batch_id: Batch ID
         max_retries: Maximum number of retries (uses global config if None)
         sleep_seconds: Seconds between retries (uses global config if None)
+        progress_callback: Optional callback function for progress updates
         
     Returns:
         dict: Dictionary containing task status information, or error message if failed
@@ -145,6 +146,9 @@ async def check_task_status(client, batch_id, max_retries=None, sleep_seconds=No
                     "status_data": status_data,
                     "total_checks": retry_count
                 }
+            
+            if progress_callback:
+                await progress_callback(retry_count, max_retries, batch_id)
             
             await asyncio.sleep(sleep_seconds)
             
